@@ -33,10 +33,11 @@ struct Camera {
                             - w;
     }
 
-    Ray get_ray(float u, float v) const {
-        glm::vec3 target = lower_left_corner
-                         + u * horizontal
-                         + v * vertical;
-        return Ray{ origin, glm::normalize(target - origin) };
-    }
+    // Remnant of pre-GPU rendering
+    //Ray get_ray(float u, float v) const {
+    //    glm::vec3 target = lower_left_corner
+    //                     + u * horizontal
+    //                     + v * vertical;
+    //    return Ray{ origin, glm::normalize(target - origin) };
+    //}
 };

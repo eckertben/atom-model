@@ -45,7 +45,7 @@ struct Wavefunction {
         double fact_bottom = factorial(n + l); // (n+l)!
         
         // Using (n+l)!^3 as per common wavefunction normalization
-        double norm = std::sqrt(term1 * fact_top / (2.0 * n * std::pow(fact_bottom, 3.0)));
+        double norm = std::sqrt(term1 * fact_top / (2.0 * n * fact_bottom));
 
         double result = norm 
                     * std::exp(-rho / 2.0) 

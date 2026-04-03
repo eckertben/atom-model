@@ -1,0 +1,137 @@
+static glm::vec3 pixel(const Ray& ray, const std::vector<Sphere>& spheres, const Light& light) {
+    // Normalised Y in [-1,1] → t in [0,1]
+    float t = -1.0f;
+    float prob = 0.0f;
+    Sphere hitSphere; // To store the hit sphere for shading
+    for (const auto& sphere : spheres) {
+        float temp = sphere.intersect(ray);
+        if (temp > 0.0f && (t < 0.0f || temp < t)) {
+            t = temp;
+            prob = sphere.probability;
+            hitSphere = sphere;
+            break; // Stop at first hit for simplicity
+        }
+    }
+    if (t > 0.0f) {
+        // Hit sphere: simple normal-based shading
+        glm::vec3 color = glm::mix(
+                            glm::vec3(0.0f, 0.0f, 1.0f),  // blue
+                            glm::vec3(1.0f, 0.0f, 0.0f),  // red
+                            prob
+                        );
+        
+        // Calculate hit point and normal for shading
+        glm::vec3 hitPoint = ray.at(t);
+        glm::vec3 surfaceNormal = glm::normalize(hitPoint - hitSphere.center);
+        // Calculate shading based on light direction and surface normal
+        glm::vec3 lightDir = glm::normalize(light.position - hitPoint);
+        float diffuseFactor = glm::max(glm::dot(surfaceNormal, lightDir), 0.0f); // ABS of portion of light that hits the surface
+        glm::vec3 shading = light.color * diffuseFactor * light.intensity;
+        // Return color based on probability * light normal for simple shading
+        return color * shading; // blue for low prob, red for high
+    }
+    return glm::vec3(0.0f, 0.0f, 0.0f);
+}
+
+// Render the current scene into pixel buffer by casting primary rays through each pixel.
+static void render(std::vector<uint32_t>& pixels, const Camera& cam, const std::vector<Sphere>& spheres, const Light& light) {
+    for (int y = 0; y < HEIGHT; ++y) {
+        for (int x = 0; x < WIDTH; ++x) {
+            float u = (x + 0.5f) / static_cast<float>(WIDTH);
+            float v = 1.0f - (y + 0.5f) / static_cast<float>(HEIGHT);
+            Ray   r = cam.get_ray(u, v);
+            pixels[y * WIDTH + x] = vec3_to_argb(pixel(r, spheres, light));
+        }
+    }
+}
+
+// Create the wavefunction instance for given atomic numbers
+    // Wavefunction wavefunction(n, l, m);
+
+    // Sample points and evaluate the wavefunction
+    float psi_max = 0.0f;
+    std::vector<glm::vec3> points;
+    float bound = 4.0f * n * n;
+    for (int i = 0; i < NUM_CANDIDATES; ++i) {
+        // Sample points in a cube around the origin
+        glm::vec3 p = glm::vec3(
+            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 1.0f * bound,
+            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 1.0f * bound,
+            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 1.0f * bound
+        );
+        float prob = wavefunction.evaluate(p);
+        if (prob > psi_max) psi_max = prob;
+    }
+
+    for (int i = 0; i < NUM_CANDIDATES; ++i) {
+        // Sample points in a cube around the origin
+        glm::vec3 p = glm::vec3(
+            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 1.0f * bound,
+            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 1.0f * bound,
+            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 1.0f * bound
+        );
+        float prob = wavefunction.evaluate(p);
+        if ((static_cast<float>(rand()) / RAND_MAX) < prob / psi_max)
+            points.push_back(p);
+    }
+
+    // Creates spheres for nucleus and sampled electron cloud
+    std::vector<Sphere> spheres;
+    spheres.push_back({glm::vec3(0.0f, 0.0f, 0.0f), 0.05f, 1.0f}); // nucleus
+    for (const auto& p : points) {
+        spheres.push_back({p, 0.04f, wavefunction.evaluate(p) / psi_max}); // electron cloud points
+    }
+
+    // Integral approx, should be close to 1
+    float sum = 0.0f;
+    for (const auto& s : spheres)
+        sum += s.probability;
+    printf("integral approx: %f\n", sum / NUM_CANDIDATES);
+
+    Camera cam(
+        glm::vec3(0.0f, 0.0f, 5.0f * (float)n),   // position
+        glm::vec3(0.0f, 0.0f, 0.0f),   // direction
+        glm::vec3(0.0f, 1.0f, 0.0f),   // up
+        45.0f,                          // vfov degrees
+        static_cast<float>(WIDTH) / static_cast<float>(HEIGHT)
+    );
+
+    Light light(glm::vec3(3.0f, 2.0f, 5.0f), glm::vec3(1.0f), 1.0f);
+
+    #include "kernel/camera.h"
+#include "kernel/wavefunction.h"
+#include "kernel/sphere.h"
+#include "kernel/light.h"
+
+cpu/ray.h cpu/sphere.h cpu/camera.h cpu/light.h cpu/wavefunction.h cpu/ray.h
+
+
+static void process_tile(const Ray ray, __local Sphere* tile, int tile_count, float* closest_t, int* hit_global_idx, int offset, const __constant Light* light) {
+
+    for (int i = 0; i < num_spheres; i++) {
+        float temp_t = intersect(spheres[i], ray);
+        if (temp_t > 0.0f && (t < 0.0f || temp_t < t)) {
+            t = temp_t;
+            prob = spheres[i].probability;
+            hit_idx = i;
+        }
+    }
+    if (t > 0.0f) {
+        // Hit sphere: simple normal-based shading
+        float3 color = mix((float3)(0.0f, 0.0f, 1.0f),  // blue
+                            (float3)(1.0f, 0.0f, 0.0f),  // red
+                            prob);
+        
+        // Calculate hit point and normal for shading
+        float4 hitPoint = at(ray, t);
+        float4 surfaceNormal = normalize(hitPoint - spheres[hit_idx].center);
+        // Calculate shading based on light direction and surface normal
+        float4 lightDir = normalize(light->position - hitPoint);
+        float diffuse = max(dot(surfaceNormal, lightDir), 0.0f); // ABS of portion of light that hits the surface
+        float3 shading = (float3)(light->color.x, light->color.y, light->color.z) 
+                        * diffuse * light->intensity;
+        // Return color based on probability * light normal for simple shading
+        return color * shading; // blue for low prob, red for high
+    }
+    return (float3)(0.0f, 0.0f, 0.0f);
+}

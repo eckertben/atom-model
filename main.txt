@@ -1,0 +1,227 @@
+#include <OpenCL/opencl.h>
+#include <SDL2/SDL.h>
+#include <glm/glm.hpp>
+#include <vector>
+#include <fstream>
+#include <cstdint>
+#include <cstdio>
+#include "cpu/ray.h"
+#include "cpu/camera.h"
+#include "cpu/wavefunction.h"
+#include "cpu/sphere.h"
+#include "cpu/light.h"
+
+constexpr int WIDTH  = 1280;
+constexpr int HEIGHT = 720;
+
+constexpr int NUM_CANDIDATES = 40000; // Number of random points to sample for electron cloud
+
+// Convert a normalized floating-point rgb value to a packed ARGB pixel.
+// Clamps each component to [0,1], scales to [0,255], and packs into 0xAARRGGBB format.
+static uint32_t vec3_to_argb(glm::vec3 c) {
+    uint8_t r = static_cast<uint8_t>(glm::clamp(c.r, 0.0f, 1.0f) * 255.0f);
+    uint8_t g = static_cast<uint8_t>(glm::clamp(c.g, 0.0f, 1.0f) * 255.0f);
+    uint8_t b = static_cast<uint8_t>(glm::clamp(c.b, 0.0f, 1.0f) * 255.0f);
+    return (0xFFu << 24) | (r << 16) | (g << 8) | b;
+}
+
+static glm::vec3 pixel(const Ray& ray, const std::vector<Sphere>& spheres, const Light& light) {
+    // Normalised Y in [-1,1] → t in [0,1]
+    float t = -1.0f;
+    float prob = 0.0f;
+    Sphere hitSphere; // To store the hit sphere for shading
+    for (const auto& sphere : spheres) {
+        float temp = sphere.intersect(ray);
+        if (temp > 0.0f && (t < 0.0f || temp < t)) {
+            t = temp;
+            prob = sphere.probability;
+            hitSphere = sphere;
+            break; // Stop at first hit for simplicity
+        }
+    }
+    if (t > 0.0f) {
+        // Hit sphere: simple normal-based shading
+        glm::vec3 color = glm::mix(
+                            glm::vec3(0.0f, 0.0f, 1.0f),  // blue
+                            glm::vec3(1.0f, 0.0f, 0.0f),  // red
+                            prob
+                        );
+        
+        // Calculate hit point and normal for shading
+        glm::vec3 hitPoint = ray.at(t);
+        glm::vec3 surfaceNormal = glm::normalize(hitPoint - hitSphere.center);
+        // Calculate shading based on light direction and surface normal
+        glm::vec3 lightDir = glm::normalize(light.position - hitPoint);
+        float diffuseFactor = glm::max(glm::dot(surfaceNormal, lightDir), 0.0f); // ABS of portion of light that hits the surface
+        glm::vec3 shading = light.color * diffuseFactor * light.intensity;
+        // Return color based on probability * light normal for simple shading
+        return color * shading; // blue for low prob, red for high
+    }
+    return glm::vec3(0.0f, 0.0f, 0.0f);
+}
+
+// Render the current scene into pixel buffer by casting primary rays through each pixel.
+static void render(std::vector<uint32_t>& pixels, const Camera& cam, const std::vector<Sphere>& spheres, const Light& light) {
+    for (int y = 0; y < HEIGHT; ++y) {
+        for (int x = 0; x < WIDTH; ++x) {
+            float u = (x + 0.5f) / static_cast<float>(WIDTH);
+            float v = 1.0f - (y + 0.5f) / static_cast<float>(HEIGHT);
+            Ray   r = cam.get_ray(u, v);
+            pixels[y * WIDTH + x] = vec3_to_argb(pixel(r, spheres, light));
+        }
+    }
+}
+
+static void save_ppm(const std::vector<uint32_t>& pixels) {
+    std::ofstream f("output.ppm", std::ios::binary);
+    f << "P6\n" << WIDTH << " " << HEIGHT << "\n255\n";
+    for (uint32_t p : pixels) {
+        uint8_t rgb[3] = {
+            static_cast<uint8_t>((p >> 16) & 0xFF),
+            static_cast<uint8_t>((p >>  8) & 0xFF),
+            static_cast<uint8_t>( p        & 0xFF)
+        };
+        f.write(reinterpret_cast<char*>(rgb), 3);
+    }
+    std::puts("Saved output.ppm");
+}
+
+// Main application loop: setup SDL, render once, present texture, handle input, cleanup.
+int main(int argc, char* argv[]) {
+    // Capture quantum numbers from command line
+    int n = std::stoi(argv[1]); 
+    int l = std::stoi(argv[2]);
+    int m = std::stoi(argv[3]);
+    if (argc >= 4) {
+        printf("n=%d, l=%d, m=%d\n", n, l, m);
+    }
+
+    // Initialize SDL and create window, renderer,
+    // and texture for the scene.
+    // Basic initialization with error handling.
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+        SDL_Log("SDL_Init failed: %s", SDL_GetError());
+        return 1;
+    }
+
+    SDL_Window* window = SDL_CreateWindow(
+        "Atom Ray Tracer",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        WIDTH, HEIGHT,
+        SDL_WINDOW_SHOWN
+    );
+    if (!window) {
+        SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
+        SDL_Quit();
+        return 1;
+    }
+
+    SDL_Renderer* renderer = SDL_CreateRenderer(
+        window, -1,
+        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC
+    );
+    if (!renderer) {
+        SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+
+    SDL_Texture* texture = SDL_CreateTexture(
+        renderer,
+        SDL_PIXELFORMAT_ARGB8888,
+        SDL_TEXTUREACCESS_STREAMING,
+        WIDTH, HEIGHT
+    );
+    if (!texture) {
+        SDL_Log("SDL_CreateTexture failed: %s", SDL_GetError());
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+
+    // Create the wavefunction instance for given atomic numbers
+    Wavefunction wavefunction(n, l, m);
+
+    // Sample points and evaluate the wavefunction
+    float psi_max = 0.0f;
+    std::vector<glm::vec3> points;
+    float bound = 4.0f * n * n;
+    for (int i = 0; i < NUM_CANDIDATES; ++i) {
+        // Sample points in a cube around the origin
+        glm::vec3 p = glm::vec3(
+            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 1.0f * bound,
+            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 1.0f * bound,
+            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 1.0f * bound
+        );
+        float prob = wavefunction.evaluate(p);
+        if (prob > psi_max) psi_max = prob;
+    }
+
+    for (int i = 0; i < NUM_CANDIDATES; ++i) {
+        // Sample points in a cube around the origin
+        glm::vec3 p = glm::vec3(
+            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 1.0f * bound,
+            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 1.0f * bound,
+            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 1.0f * bound
+        );
+        float prob = wavefunction.evaluate(p);
+        if ((static_cast<float>(rand()) / RAND_MAX) < prob / psi_max)
+            points.push_back(p);
+    }
+
+    // Creates spheres for nucleus and sampled electron cloud
+    std::vector<Sphere> spheres;
+    spheres.push_back({glm::vec3(0.0f, 0.0f, 0.0f), 0.05f, 1.0f}); // nucleus
+    for (const auto& p : points) {
+        spheres.push_back({p, 0.04f, wavefunction.evaluate(p) / psi_max}); // electron cloud points
+    }
+
+    // Integral approx, should be close to 1
+    float sum = 0.0f;
+    for (const auto& s : spheres)
+        sum += s.probability;
+    printf("integral approx: %f\n", sum / NUM_CANDIDATES);
+
+    Camera cam(
+        glm::vec3(0.0f, 0.0f, 5.0f * (float)n),   // position
+        glm::vec3(0.0f, 0.0f, 0.0f),   // direction
+        glm::vec3(0.0f, 1.0f, 0.0f),   // up
+        45.0f,                          // vfov degrees
+        static_cast<float>(WIDTH) / static_cast<float>(HEIGHT)
+    );
+
+    Light light(glm::vec3(3.0f, 2.0f, 5.0f), glm::vec3(1.0f), 1.0f);
+
+    std::vector<uint32_t> pixels(WIDTH * HEIGHT);
+    render(pixels, cam, spheres, light);   // render once (static scene for now)
+
+    bool running = true;
+    SDL_Event event;
+
+    while (running) {
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) {
+                running = false;
+            } else if (event.type == SDL_KEYDOWN) {
+                switch (event.key.keysym.sym) {
+                    case SDLK_ESCAPE: running = false; break;
+                    case SDLK_s:      save_ppm(pixels); break;
+                    default: break;
+                }
+            }
+        }
+
+        SDL_UpdateTexture(texture, nullptr, pixels.data(), WIDTH * sizeof(uint32_t));
+        SDL_RenderClear(renderer);
+        SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+        SDL_RenderPresent(renderer);
+    }
+
+    SDL_DestroyTexture(texture);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+    return 0;
+}

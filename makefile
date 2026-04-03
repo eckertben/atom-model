@@ -11,7 +11,7 @@ SRCS     := main.cpp
  
 all: $(TARGET)
  
-$(TARGET): $(SRCS) ray.h camera.h wavefunction.h sphere.h
+$(TARGET): $(SRCS)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(SRCS) -o $(TARGET) $(LDFLAGS) $(LIBS)
  
 run: all
