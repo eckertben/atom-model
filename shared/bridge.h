@@ -16,12 +16,12 @@ struct CameraGPU {
     cl_float4 vertical;
 };
 
-struct SphereGPU {
-    cl_float4 center;
-    cl_float  radius;
-    cl_float  probability;
-    cl_float  pad[2];
-};
+//struct SphereGPU {
+//    cl_float4 center;
+//    cl_float  radius;
+//    cl_float  probability;
+//    cl_float  pad[2];
+//};
 
 struct LightGPU {
     cl_float4 position;
@@ -38,14 +38,14 @@ inline CameraGPU to_gpu(const Camera& cam) {
     };
 }
 
-inline SphereGPU to_gpu(const Sphere& s) {
-    return SphereGPU{
-        { s.center.x, s.center.y, s.center.z, 0.0f },
-        s.radius,
-        s.probability,
-        { 0.0f, 0.0f }
-    };
-}
+//inline SphereGPU to_gpu(const Sphere& s) {
+//    return SphereGPU{
+//        { s.center.x, s.center.y, s.center.z, 0.0f },
+//        s.radius,
+//        s.probability,
+//        { 0.0f, 0.0f }
+//    };
+//}
 
 inline LightGPU to_gpu(const Light& l) {
     return LightGPU{

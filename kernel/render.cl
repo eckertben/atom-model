@@ -11,10 +11,16 @@ static int get_local_linear_id() {
     return get_local_id(1) * get_local_size(0) + get_local_id(0);
 }
 
-static void process_tile(const Ray ray, __local Sphere* tile, int tile_count, float* closest_t, int* hit_idx, int offset) {
-    // Find closest hit in tile group and return the distance, probability, and index (global)
+static void process_tile(const Ray ray, __local float4* tile, int tile_count, float* closest_t, int* hit_idx, int offset, float radius) {
     for (int i = 0; i < tile_count; i++) {
-        float temp_t = intersect(tile[i], ray);
+        float4 data = tile[i];
+        // Create a temporary sphere using the xyz as center and w as probability
+        Sphere s;
+        s.center = (float4)(data.xyz, 0.0f); 
+        s.radius = radius;
+        s.probability = data.w;
+
+        float temp_t = intersect_sphere(s, ray);
         if (temp_t > 0.0f && (*closest_t < 0.0f || temp_t < *closest_t)) {
             *closest_t = temp_t;
             *hit_idx = offset + i;
@@ -30,7 +36,7 @@ static float3 shade(const Ray ray, float3 color, float4 normal, __constant Light
 }
 
 // Render the current scene into pixel buffer by casting primary rays through each pixel.
-__kernel void render(__global uint* pixels, int width, int height, __constant Camera* cam, __constant Sphere* spheres, int num_spheres, __constant Light* light, __local Sphere* tile) {
+__kernel void render(__global uint* pixels, int width, int height, __constant Camera* cam, __global float4* points, int num_points, float sphere_radius, __constant Light* light, __local float4* tile, __global int* visible) {
     
     int x = get_global_id(0);
     int y = get_global_id(1);
@@ -43,19 +49,33 @@ __kernel void render(__global uint* pixels, int width, int height, __constant Ca
     float t = -1.0f;
     int hit_idx = -1;
 
-    for (int i = 0; i < num_spheres; i += TILE_SIZE) {
-        // Each thread (as long as there are spheres left) is utilized
-        if (i + local_id < num_spheres) {
-            tile[local_id] = spheres[i + local_id];
+    float axis_t = -1.0f;
+    int axis_id = -1; // 0=X, 1=Y, 2=Z
+
+    float tx = intersect_axis(ray, (float3)(1,0,0), 0.02f, 15.0f);
+    float ty = intersect_axis(ray, (float3)(0,1,0), 0.02f, 15.0f);
+    float tz = intersect_axis(ray, (float3)(0,0,1), 0.02f, 15.0f);
+
+    // Check which axis is closest
+    if (tx > 0 && (axis_t < 0 || tx < axis_t)) { axis_t = tx; axis_id = 0; }
+    if (ty > 0 && (axis_t < 0 || ty < axis_t)) { axis_t = ty; axis_id = 1; }
+    if (tz > 0 && (axis_t < 0 || tz < axis_t)) { axis_t = tz; axis_id = 2; }
+
+    for (int i = 0; i < num_points; i += TILE_SIZE) {
+        // Each thread (as long as there are points left) is utilized
+        if (i + local_id < num_points && visible[i + local_id]) {
+            tile[local_id] = points[i + local_id];
+        } else {
+            tile[local_id] = (float4)(0.0f, 0.0f, 0.0f, -1.0f);  // invalid filler point
         }
 
-        // Wait until all spheres are loaded
+        // Wait until all points are loaded
         barrier(CLK_LOCAL_MEM_FENCE);
 
         // Pass to pixel color func
         if (x < width && y < height) {
-            int current_tile_size = min(TILE_SIZE, num_spheres - i);
-            process_tile(ray, tile, current_tile_size, &t, &hit_idx, i);
+            int current_tile_size = min(TILE_SIZE, num_points - i);
+            process_tile(ray, tile, current_tile_size, &t, &hit_idx, i, sphere_radius);
         }
 
         // Wait until all spheres are processed
@@ -63,16 +83,20 @@ __kernel void render(__global uint* pixels, int width, int height, __constant Ca
     }
 
     float3 final_color;
-    if (t > 0 && hit_idx != -1) {
-        Sphere hit_sphere = spheres[hit_idx];
+    if (axis_t > 0 && (t < 0 || axis_t < t)) {
+        if (axis_id == 0) final_color = (float3)(1, 0, 0); // Red X
+        if (axis_id == 1) final_color = (float3)(0, 1, 0); // Green Y
+        if (axis_id == 2) final_color = (float3)(0, 0, 1); // Blue Z
+    } else if (t > 0 && hit_idx != -1) {
+        float4 hit = points[hit_idx];
 
         float3 color = mix((float3)(0.0f, 0.0f, 1.0f),  // blue
                             (float3)(1.0f, 0.0f, 0.0f),  // red
-                            hit_sphere.probability);
+                            hit.w);
 
         // Calculate hit point and normal for shading
         float4 hit_point = at(ray, t);
-        float4 normal = normalize(hit_point - hit_sphere.center);
+        float4 normal = normalize(hit_point - (float4)(hit.xyz, 0.0));
         float4 light_direction = normalize(light->position - hit_point);
         final_color = shade(ray, color, normal, light, light_direction);
     } else {
@@ -80,5 +104,29 @@ __kernel void render(__global uint* pixels, int width, int height, __constant Ca
     }
 
     pixels[y * width + x] = vec3_to_argb(final_color);
+}
+
+__kernel void update(__global float4* base, __global float4* points, int num_points, float t,
+                float energy, int m, float scale) {
+    int i = get_global_id(0);
+    if (i >= num_points) return;
+    if (i == 0) return; // skips nucleus
+
+    int bi = (i - 1) * 2;
+    float psi = base[bi+1].y;
+    float phi = base[bi+1].x;
+    float prob = points[i].w;
+    float3 pos  = base[bi].xyz;
+    float3 dir_radial = normalize(pos);
+
+    // tangential direction — perpendicular to radial and z-axis
+    float3 z_axis = (float3)(0.0f, 0.0f, 1.0f);
+    float3 dir_tangent = normalize(cross(z_axis, dir_radial));
+
+    float phase = (float)m * phi - energy * t;
+    float disp  = psi * cos(phase) * scale;
+
+    float3 new_pos = pos + dir_tangent * disp;
+    points[i] = (float4)(new_pos, prob); 
 }
 

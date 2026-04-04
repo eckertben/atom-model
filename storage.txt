@@ -135,3 +135,73 @@ static void process_tile(const Ray ray, __local Sphere* tile, int tile_count, fl
     }
     return (float3)(0.0f, 0.0f, 0.0f);
 }
+
+
+
+case SDLK_n:
+                        if (event.key.keysym.mod & KMOD_SHIFT){
+                            n = std::min(4, n + 1);
+                        }
+                        else {
+                            n = std::max(1, n - 1);
+                            l = std::min(n - 1, l); // adjust l to be valid for new n
+                        }
+                        new_state = true;
+                        // resample
+                        break;
+
+                    case SDLK_l:
+                        if (event.key.keysym.mod & KMOD_SHIFT) {
+                            l = std::min(n - 1, l + 1);  // l < n always
+                        }
+                        else {
+                            l = std::max(0, l - 1);
+                            m = std::max(-l, std::min(l, m)); // adjust m to be valid for new l
+                        }
+                        new_state = true;
+                        break;
+
+                    case SDLK_m:
+                        if (event.key.keysym.mod & KMOD_SHIFT) {
+                            m = std::min(l, m + 1);      // |m| <= l always
+                        }
+                        else {
+                            m = std::max(-l, m - 1);
+                        }
+                        new_state = true;
+                        // resample
+                        break;
+                    changed = true;
+                    default: break;
+                }
+
+
+
+                if (new_state) {
+            wf = Wavefunction(n, l, m);
+            auto [new_base_points, new_points] = sampleWavefunction(wf, t, n);
+            base_points = std::move(new_base_points);
+            points = std::move(new_points);
+
+            clEnqueueWriteBuffer(queue, d_base, CL_TRUE, 0,
+                                sizeof(cl_float4) * base_points.size(),
+                                base_points.data(), 0, nullptr, nullptr);
+            clEnqueueWriteBuffer(queue, GPU_points, CL_TRUE, 0,
+                                sizeof(cl_float4) * points.size(),
+                                points.data(), 0, nullptr, nullptr);
+            int num_points = static_cast<int>(points.size());
+            clSetKernelArg(update_kernel, 2, sizeof(int), &num_points);
+            clSetKernelArg(render_kernel, 5, sizeof(int), &num_points);
+
+            num_points     = (int)points.size();
+            num_points_gpu = points.size();
+
+            // rebind kernel args
+            clSetKernelArg(update_kernel, 0, sizeof(cl_mem), &d_base);
+            clSetKernelArg(update_kernel, 1, sizeof(cl_mem), &GPU_points);
+            clSetKernelArg(update_kernel, 2, sizeof(int),    &num_points);
+            clSetKernelArg(render_kernel, 4, sizeof(cl_mem), &GPU_points);
+            clSetKernelArg(render_kernel, 5, sizeof(int),    &num_points);
+
+            new_state = false;
+        }

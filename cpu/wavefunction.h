@@ -1,11 +1,10 @@
 #pragma once
 #include <glm/glm.hpp>
+#include <complex>
 
 struct Wavefunction {
     int n, l, m;
-    Wavefunction(int n_, int l_, int m_) : n(n_), l(l_), m(m_) {
-
-    }
+    Wavefunction(int n_, int l_, int m_) : n(n_), l(l_), m(m_) {}
 
     double factorial(int k) const {
         if (k <= 1) return 1.0;
@@ -70,14 +69,20 @@ struct Wavefunction {
         return 0.0f;
     }
 
+    float energy() const {
+        return -0.5f / (float)(n * n);
+    }
+
     // Evaluate the wavefunction at a given point
-    float evaluate(const glm::vec3& point) const {
+    std::complex<float> evaluate(const glm::vec3& point, float t) const {
+    //float evaluate(const glm::vec3& point, float t) const {
         float r = glm::length(point);
         if (r < 1e-6f) return 0.0f;  // guard against origin
         float theta = glm::acos(point.z / r);
         float phi = glm::atan(point.y, point.x);
 
         float psi = radial(r, n, l) * angular(l, m, theta, phi);
-        return psi * psi;  // |ψ|²
+        float phase = -energy() * t;
+        return psi * std::complex<float>(glm::cos(phase), glm::sin(phase));
     }
 };

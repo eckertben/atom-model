@@ -16,6 +16,11 @@ Given a set of quantum numbers `n`, `l`, `m` from the command line, the program:
 
 Camera control is interactive: click and drag to orbit, scroll to zoom.
 
+Can cut the atom along he z=0 plane for better visibility where l->n
+
+Shift+n to increase energy level, n to decrease, Shift+l to increase angular number,
+l to decrease, Shift+m to increase magnetic number, m to decrease.
+
 ---
 
 ## Physics
@@ -44,6 +49,11 @@ The pre-pass and sampling pass use independent random sequences, which means `ps
 Accepted point count varies by orbital. Typical acceptance rates are 5–10% for low quantum numbers, lower for higher `n` where density is spread over a larger volume.
 
 ---
+
+## Time Dependence
+Can enable time dependence by uncommenting line 527 and 528, however performance
+is very buggy and not recommended. Time dependence is simple and according to the
+phase shift, which is a liberty taken purely for visual demonstration.
 
 ## GPU compute (OpenCL)
 
