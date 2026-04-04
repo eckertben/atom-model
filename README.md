@@ -2,6 +2,8 @@
 
 A physics-based ray tracer for visualising central force atomic orbitals, written in C++ with an OpenCL GPU compute backend and SDL2 rendering. Built as a personal project to explore the intersection of quantum mechanics, Monte Carlo methods, and GPU compute.
 
+This project explores how Monte Carlo sampling and GPU parallelism can be used to approximate and visualize high-dimensional probability distributions, using quantum wavefunctions as a concrete case study.
+
 ---
 
 ## What it does
@@ -48,6 +50,8 @@ The pre-pass and sampling pass use independent random sequences, which means `ps
 
 Accepted point count varies by orbital. Typical acceptance rates are 5–10% for low quantum numbers, lower for higher `n` where density is spread over a larger volume.
 
+This is effectively a stochastic estimator for sampling from an analytically defined probability density function in 3D.
+
 ---
 
 ## Time Dependence
@@ -72,6 +76,7 @@ CPU-side structs (`Camera`, `Sphere`, `Light`) use GLM. A dedicated `shared/brid
 - ~2.18ms render kernel time at 2000 spheres (1280×720)
 - ~22ms at 20000 spheres: O(n) intersection tests per ray is the bottleneck at scale
     - Something that could be fixed, however cloud looks decent at smaller ranges
+    - Demonstrates linear scaling due to the absence of spatial acceleration structures
 ---
 
 ## Known limitations and future work
